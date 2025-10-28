@@ -9,21 +9,25 @@ def edgeAtomicNumber(e1, e2):
     # atomic formulas representing "there is an edge between e1 and e2"
     if (e1 > e2):
         e1, e2 = e2, e1
-    return (V + 1) + 1 + V*e1 + e2
+    edgeOrder = e1 * V - (e1*(e1+1))//2 + (e2 - e1)
+    return V + edgeOrder
 def seqCounterNumber(i,j):
     # atomic formulas representing "from first i vertices, at least j are in a clique"
-    return (V+1) + V*V + 1 + V*i + j
+    return V*V + 1 + V*i+j
 
 def inputParser(input_file_name):
     with open(input_file_name, "r") as file:
+        adjacencyMatrix = []
+        V = -1
+        E = -1
         for line in file:
             lineList = line.split()
             if (lineList[0] == "c"): continue
             elif lineList[0] == "p" and (lineList[1] == "edge" or lineList[1] == "col"):
                 V = int(lineList[2])
                 E = int(lineList[3])
-                adjacencyMatrix = [[0] * V] * V
-                #print(V, E)
+                for i in range(V): adjacencyMatrix.append([0]*V)
+      
                 
             elif lineList[0] == "e":
                 v1, v2 = int(lineList[1]), int(lineList[2])
@@ -32,17 +36,17 @@ def inputParser(input_file_name):
                 adjacencyMatrix[v1][v2] = 1
                 adjacencyMatrix[v2][v1] = 1
             else: 
-                #print("WRONG INPUT")
+                print("WRONG INPUT")
                 exit(0)
     return V, E, adjacencyMatrix
 
 def call_solver(cnf, nr_vars, output_name, solver_name, verbosity):
-    #print(cnf)
     # print CNF into formula.cnf in DIMACS format
     with open(output_name, "w") as file:
         file.write("p cnf " + str(nr_vars) + " " + str(len(cnf)) + '\n')
         for clause in cnf:
-            file.write(' '.join(str(lit) for lit in clause) + '\n') # maybe 0 at the end??
+            file.write(' '.join(str(lit) for lit in clause) + " 0\n") # maybe 0 at the end??
+    #exit(0)
 
     # call the solver and return the output
     return subprocess.run(['./' + solver_name, '-model', '-verb=' + str(verbosity) , output_name], stdout=subprocess.PIPE)
@@ -52,10 +56,11 @@ def graphLogic():
     temp_cnf = []
     # add formulas representing edges
     for i in range(V):
-        for j in range(V):
-            if adjacencyMatrix[i][j]: temp_cnf.append([edgeAtomicNumber(i,j)])
-            else: temp_cnf.append([- edgeAtomicNumber(i,j)])
-
+        for j in range(i+1, V):
+            if adjacencyMatrix[i][j]: 
+                temp_cnf.append([edgeAtomicNumber(i,j)])
+            else: 
+                temp_cnf.append([- edgeAtomicNumber(i,j)])
     # add formulas representing vertices in cliques
     # v_1 && v_2 -> e_1,2
     # not v_1 or not v_2 or e_1,2
@@ -83,12 +88,14 @@ def counterLogic():
     # (s_1,1 or not v) and (x or not s_1,1)
     temp_cnf.append([seqCounterNumber(0,0), -vertexAtomicNumber(0)])
     temp_cnf.append([-seqCounterNumber(0,0), vertexAtomicNumber(0)])
-    # if vertex v is in clique, then increment
-    # (v and s_v-1,j) -> s_v,j+1
+    # iff vertex v is in clique, then increment
+    # (v and s_v-1,j) <-> s_v,j+1
     # not v or not s_v-1,j or s_v,j+1
     for v in range(1, V):
         for j in range(V-1):
             temp_cnf.append([-vertexAtomicNumber(v), -seqCounterNumber(v-1, j), seqCounterNumber(v, j+1)])
+            temp_cnf.append([vertexAtomicNumber(v), - seqCounterNumber(v, j+1)])
+            temp_cnf.append([seqCounterNumber(v-1, j), - seqCounterNumber(v, j+1)])
 
     return temp_cnf
 
@@ -105,7 +112,6 @@ def getCliqueVertices(result):
     clique = []
     for m in model:
         if (abs(m) <= V and m > 0): clique.append(m)
-
     return clique
 
 
@@ -155,37 +161,33 @@ if __name__ == "__main__":
     # get the input instance
     V, E, adjacencyMatrix = inputParser(args.input)
 
-    nr_vars = V + 2*V*V + 1
-    #print(nr_vars)
+    nr_vars = V*V + V*V
 
     cnf = []
     cnf.extend(graphLogic())
     cnf.extend(counterLogic())
-    print(cnf)
-    exit(0)
+    
 
     # now we just binary search the biggest possible amount of verteces in cliques
     smallEnd = 0
     b = 1
-    while b*2 < V: b *= 2
+    while b*2 < V/2 : b *= 2
     while b > 0:
         k = smallEnd + b
         cnf.append([seqCounterNumber(V-1, k)])
-        # TODO: solve cnf
-        # if solution: smallEnd = k
         result = call_solver(cnf, nr_vars, args.output, args.solver, args.verb)
         if result.returncode == 10: smallEnd = k
         cnf.pop()
-    b //= 2
+        b //= 2
 
     # now we know the max clique has size smallEnd
     # we run the  SAT solver one last time to get the vertices of the clique
-    cnf.append(seqCounterNumber(V-1, smallEnd))
+    cnf.append([seqCounterNumber(V-1, smallEnd)])
     result = call_solver(cnf, nr_vars, args.output, args.solver, args.verb)
-    # print results
-    print("THE MAXIMUM CLIQUE HAS SIZE ", smallEnd, '\n')
-    print("the following vertices form a clique of size ", smallEnd, ":")
+    print("THE MAXIMUM CLIQUE HAS SIZE", smallEnd)
+    print("the following vertices form a clique of size", smallEnd, ":")
     clique = getCliqueVertices(result)
-    print(" ".join(clique))
+    for i in range(len(clique) - 1): print(clique[i], end=" ")
+    print(clique[-1])
     
     
