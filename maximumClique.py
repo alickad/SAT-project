@@ -1,4 +1,5 @@
 import subprocess
+from argparse import ArgumentParser
 
 V = 0
 E = 0
@@ -17,74 +18,178 @@ def seqCounterNumber(i,j):
     # atomic formulas representing "from first i vertices, at least j are in a clique"
     return (V+1) + V*V + 1 + V*i + j
 
-def inputParser():
-    inputString = ""
-    while inputString:
-        inputString = input()
-        inputList = inputString.split()
-        if (inputList[0] == "c"): continue
-        elif inputList[0] == "p" and (inputList[1] == "edge" or inputList[1] == "col"):
-            V = int(inputList[2])
-            E = int(inputList[3])
-            adjacencyMatrix = [[0] * V] * V
-            
-        elif inputList[0] == "e":
-            v1, v2 = int(inputList[1]), int(inputList[2])
-            adjacencyMatrix[v1][v2] = 1
-            adjacencyMatrix[v2][v1] = 1
-        else: 
-            print("WRONG INPUT")
-            exit(0)
+def inputParser(input_file_name):
+    with open(input_file_name, "r") as file:
+        for line in file:
+            lineList = line.split()
+            if (lineList[0] == "c"): continue
+            elif lineList[0] == "p" and (lineList[1] == "edge" or lineList[1] == "col"):
+                V = int(lineList[2])
+                E = int(lineList[3])
+                adjacencyMatrix = [[0] * V] * V
+                
+            elif lineList[0] == "e":
+                v1, v2 = int(lineList[1]), int(lineList[2])
+                adjacencyMatrix[v1][v2] = 1
+                adjacencyMatrix[v2][v1] = 1
+            else: 
+                print("WRONG INPUT")
+                exit(0)
+
+def call_solver(cnf, nr_vars, output_name, solver_name, verbosity):
+    # print CNF into formula.cnf in DIMACS format
+    with open(output_name, "w") as file:
+        file.write("p cnf " + str(nr_vars) + " " + str(len(cnf)) + '\n')
+        for clause in cnf:
+            file.write(' '.join(str(lit) for lit in clause) + '\n')
+
+    # call the solver and return the output
+    return subprocess.run(['./' + solver_name, '-model', '-verb=' + str(verbosity) , output_name], stdout=subprocess.PIPE)
 
 
-inputParser()
-cnf = []
+def graphLogic():
+    temp_cnf = []
+    # add formulas representing edges
+    for i in range(V):
+        for j in range(V):
+            if adjacencyMatrix[i][j]: temp_cnf.append(edgeAtomicNumber(i,j))
+            else: temp_cnf.append( (- edgeAtomicNumber(i,j)))
 
-# add formulas representing edges
-for i in range(V):
-    for j in range(V):
-        if adjacencyMatrix[i][j]: cnf.append(edgeAtomicNumber(i,j))
-        else: cnf.append( (- edgeAtomicNumber(i,j)))
-
-# add formulas representing vertices in cliques
-# v_1 && v_2 -> e_1,2
-# not v_1 or not v_2 or e_1,2
-for v1 in range(V):
-    for v2 in range(V):
-        if v1 == v2: continue
-        cnf.append( (-vertexAtomicNumber(v1), -vertexAtomicNumber(v2), edgeAtomicNumber(v1,v2)))
+    # add formulas representing vertices in cliques
+    # v_1 && v_2 -> e_1,2
+    # not v_1 or not v_2 or e_1,2
+    for v1 in range(V):
+        for v2 in range(V):
+            if v1 == v2: continue
+            temp_cnf.append( (-vertexAtomicNumber(v1), -vertexAtomicNumber(v2), edgeAtomicNumber(v1,v2)))
+ 
+    return temp_cnf
 
 # now lets binary search the solution with most "vertex atomic formulas" getting true
 # can we find solution with at least k trues?
 # we will use sequential counter for that
 
-# if in first i are at least j true, then in first i+1 are also at least j true
-# s_i,j -> s_i+1,j
-# not s_i,j or s_i+1,j
-for i in range(V - 1):
-    for j in range(V):
-        cnf.append((-seqCounterNumber(i,j), seqCounterNumber(i+1,j)))
+def counterLogic():
+    temp_cnf = []
+    # if in first i are at least j true, then in first i+1 are also at least j true
+    # s_i,j -> s_i+1,j
+    # not s_i,j or s_i+1,j
+    for i in range(V - 1):
+        for j in range(V):
+            temp_cnf.append((-seqCounterNumber(i,j), seqCounterNumber(i+1,j)))
 
-# s_1,1 <-> v
-# (s_1,1 or not v) and (x or not s_1,1)
-cnf.append((seqCounterNumber(0,0), -vertexAtomicNumber(0)))
-cnf.append((-seqCounterNumber(0,0), vertexAtomicNumber(0)))
-# if vertex v is in clique, then increment
-# (v and s_v-1,j) -> s_v,j+1
-# not v or not s_v-1,j or s_v,j+1
-for v in range(1, V):
-    for j in range(V-1):
-        cnf.append(-vertexAtomicNumber(v), -seqCounterNumber(v-1, j), seqCounterNumber(v, j+1))
+    # s_1,1 <-> v
+    # (s_1,1 or not v) and (x or not s_1,1)
+    temp_cnf.append((seqCounterNumber(0,0), -vertexAtomicNumber(0)))
+    temp_cnf.append((-seqCounterNumber(0,0), vertexAtomicNumber(0)))
+    # if vertex v is in clique, then increment
+    # (v and s_v-1,j) -> s_v,j+1
+    # not v or not s_v-1,j or s_v,j+1
+    for v in range(1, V):
+        for j in range(V-1):
+            temp_cnf.append(-vertexAtomicNumber(v), -seqCounterNumber(v-1, j), seqCounterNumber(v, j+1))
 
-# now we just binary search the biggest possible amount of verteces in cliques
-smallEnd = 0
-b = (V + 1) // 2
-while b > 0:
-    k = smallEnd + b
+
+def getCliqueVertices(result):
+    # parse the model from the output of the solver
+    # the model starts with 'v'
+    model = []
+    for line in result.stdout.decode('utf-8').split('\n'):
+        if line.startswith("v"):    # there might be more lines of the model, each starting with 'v'
+            vars = line.split(" ")
+            vars.remove("v")
+            model.extend(int(v) for v in vars)      
+    model.remove(0) # 0 is the end of the model, just ignore it
+    clique = []
+    for m in model:
+        if (abs(m) <= V and m > 0): clique.append(m)
+
+    return clique
+
+
+if __name__ == "__main__":
+
+    parser = ArgumentParser()
+
+    parser.add_argument(
+        "-i",
+        "--input",
+        default="input.in",
+        type=str,
+        help=(
+            "The instance file."
+        ),
+    )
+    parser.add_argument(
+        "-o",
+        "--output",
+        default="formula.cnf",
+        type=str,
+        help=(
+            "Output file for the DIMACS format (i.e. the CNF formula)."
+        ),
+    )
+    parser.add_argument(
+        "-s",
+        "--solver",
+        default="glucose-syrup",
+        type=str,
+        help=(
+            "The SAT solver to be used."
+        ),
+    )
+    parser.add_argument(
+        "-v",
+        "--verb",
+        default=1,
+        type=int,
+        choices=range(0,2),
+        help=(
+            "Verbosity of the SAT solver used."
+        ),
+    )
+    args = parser.parse_args()
+
+    # get the input instance
+    inputParser(args.input)
+
+    # call the SAT solver and get the result
+    nr_vars = V + 2*V*V
+
+    cnf = []
+    cnf.extend(graphLogic())
+    cnf.extend(counterLogic())
+
+    # now we just binary search the biggest possible amount of verteces in cliques
+    smallEnd = 0
+    b = 1
+    while b*2 < V: b *= 2
+    while b > 0:
+        k = smallEnd + b
+        cnf.append(seqCounterNumber(V-1, k))
+        # TODO: solve cnf
+        # if solution: smallEnd = k
+        result = call_solver(cnf, nr_vars, args.output, args.solver, args.verb)
+        if result.returncode == 10: smallEnd = k
+        cnf.pop()
+    b //= 2
+
+    # now we know the max clique has size smallEnd
+    # we run the  SAT solver one last time to get the vertices of the clique
+    cnf.append(seqCounterNumber(V-1, smallEnd))
+    result = call_solver(cnf, nr_vars, args.output, args.solver, args.verb)
+    # print results
+    print("THE MAXIMUM CLIQUE HAS SIZE ", smallEnd, '\n')
+    print("the following vertices form a clique of size ", smallEnd, ":")
+    clique = getCliqueVertices(result)
+    print(" ".join(clique))
+    
     
 
 
-    b //= 2
+
+
+
 
 
 
