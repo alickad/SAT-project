@@ -88,14 +88,22 @@ def counterLogic():
     # (s_1,1 or not v) and (x or not s_1,1)
     temp_cnf.append([seqCounterNumber(0,0), -vertexAtomicNumber(0)])
     temp_cnf.append([-seqCounterNumber(0,0), vertexAtomicNumber(0)])
-    # iff vertex v is in clique, then increment
-    # (v and s_v-1,j) <-> s_v,j+1
+    # if vertex v is in clique, then increment
+    # (v and s_v-1,j) -> s_v,j+1
     # not v or not s_v-1,j or s_v,j+1
     for v in range(1, V):
         for j in range(V-1):
             temp_cnf.append([-vertexAtomicNumber(v), -seqCounterNumber(v-1, j), seqCounterNumber(v, j+1)])
-            temp_cnf.append([vertexAtomicNumber(v), - seqCounterNumber(v, j+1)])
-            temp_cnf.append([seqCounterNumber(v-1, j), - seqCounterNumber(v, j+1)])
+    # the orher direction
+    # (not s_v-1,j+1 and s_v,j+1) -> (v and s_v-1,j) 
+    for v in range(1, V):
+        for j in range(V-1):
+            temp_cnf.append([seqCounterNumber(v-1, j+1), -seqCounterNumber(v, j+1), seqCounterNumber(v-1, j)])
+            temp_cnf.append([seqCounterNumber(v-1, j+1), -seqCounterNumber(v, j+1), vertexAtomicNumber(v)])
+
+    # from one item, max one is true
+    for j in range(1, V):
+        temp_cnf.append([ -seqCounterNumber(0, j)])
 
     return temp_cnf
 
@@ -108,10 +116,11 @@ def getCliqueVertices(result):
             vars = line.split(" ")
             vars.remove("v")
             model.extend(int(v) for v in vars)      
-    model.remove(0) # 0 is the end of the model, just ignore it
+    #model.remove(0) # 0 is the end of the model, just ignore it
     clique = []
     for m in model:
         if (abs(m) <= V and m > 0): clique.append(m)
+    print(clique)
     return clique
 
 
@@ -171,9 +180,12 @@ if __name__ == "__main__":
     # now we just binary search the biggest possible amount of verteces in cliques
     smallEnd = 0
     b = 1
-    while b*2 < V/2 : b *= 2
+    while b*2 < V : b *= 2
     while b > 0:
         k = smallEnd + b
+        if (k > V):
+            b //= 2
+            continue
         cnf.append([seqCounterNumber(V-1, k)])
         result = call_solver(cnf, nr_vars, args.output, args.solver, args.verb)
         if result.returncode == 10: smallEnd = k
