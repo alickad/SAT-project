@@ -88,22 +88,24 @@ def counterLogic():
     # (s_1,1 or not v) and (x or not s_1,1)
     temp_cnf.append([seqCounterNumber(0,0), -vertexAtomicNumber(0)])
     temp_cnf.append([-seqCounterNumber(0,0), vertexAtomicNumber(0)])
-    # if vertex v is in clique, then increment
-    # (v and s_v-1,j) -> s_v,j+1
-    # not v or not s_v-1,j or s_v,j+1
-    for v in range(1, V):
-        for j in range(V-1):
-            temp_cnf.append([-vertexAtomicNumber(v), -seqCounterNumber(v-1, j), seqCounterNumber(v, j+1)])
-    # the orher direction
-    # (not s_v-1,j+1 and s_v,j+1) -> (v and s_v-1,j) 
-    for v in range(1, V):
-        for j in range(V-1):
-            temp_cnf.append([seqCounterNumber(v-1, j+1), -seqCounterNumber(v, j+1), seqCounterNumber(v-1, j)])
-            temp_cnf.append([seqCounterNumber(v-1, j+1), -seqCounterNumber(v, j+1), vertexAtomicNumber(v)])
-
     # from one item, max one is true
     for j in range(1, V):
         temp_cnf.append([ -seqCounterNumber(0, j)])
+    for i in range(1, V):
+        temp_cnf.append([ -seqCounterNumber(i, 0), seqCounterNumber(i-1, 0), vertexAtomicNumber(i)])
+
+    # only if vertex v is in clique, increment
+    # (v and s_v-1,j) -> s_v,j+1
+    # # not v or not s_v-1,j or s_v,j+1
+    # for v in range(1, V):
+    #     for j in range(V-1):
+    #         temp_cnf.append([-vertexAtomicNumber(v), -seqCounterNumber(v-1, j), seqCounterNumber(v, j+1)])
+    # # the other direction
+    # s_i,j -> s_i-1,j or (s_i-1,j-1 and i)
+    for i in range(1, V):
+        for j in range(1, V):
+            temp_cnf.append([ - seqCounterNumber(i, j), seqCounterNumber(i - 1, j), seqCounterNumber(i - 1, j - 1)])
+            temp_cnf.append([ - seqCounterNumber(i, j), seqCounterNumber(i - 1, j), vertexAtomicNumber(i)])
 
     return temp_cnf
 
@@ -121,7 +123,7 @@ def getCliqueVertices(result):
     for m in model:
         if (abs(m) <= V and m > 0): clique.append(m)
     print(clique)
-    return clique
+    return clique, model
 
 
 if __name__ == "__main__":
@@ -178,7 +180,7 @@ if __name__ == "__main__":
     
 
     # now we just binary search the biggest possible amount of verteces in cliques
-    smallEnd = 0
+    smallEnd = 1
     b = 1
     while b*2 < V : b *= 2
     while b > 0:
@@ -186,7 +188,7 @@ if __name__ == "__main__":
         if (k > V):
             b //= 2
             continue
-        cnf.append([seqCounterNumber(V-1, k)])
+        cnf.append([seqCounterNumber(V-1, k - 1)])
         result = call_solver(cnf, nr_vars, args.output, args.solver, args.verb)
         if result.returncode == 10: smallEnd = k
         cnf.pop()
@@ -194,12 +196,23 @@ if __name__ == "__main__":
 
     # now we know the max clique has size smallEnd
     # we run the  SAT solver one last time to get the vertices of the clique
-    cnf.append([seqCounterNumber(V-1, smallEnd)])
+    cnf.append([seqCounterNumber(V-1, smallEnd - 1)])
     result = call_solver(cnf, nr_vars, args.output, args.solver, args.verb)
     print("THE MAXIMUM CLIQUE HAS SIZE", smallEnd)
     print("the following vertices form a clique of size", smallEnd, ":")
-    clique = getCliqueVertices(result)
+    clique, model = getCliqueVertices(result)
     for i in range(len(clique) - 1): print(clique[i], end=" ")
     print(clique[-1])
+
+    print("\n now lets see the seq")
+    model.insert(0, 0)
+    for seq in range(V*V + 1, V*V + V*V + 1):
+        index = seq - V*V -1
+        if (index %V == 0): print()
+        if (model[seq] > 0): print(1, end="")
+        elif (model[seq] < 0): print(0, end="")
+        else: print("huh")
+
+
     
     
